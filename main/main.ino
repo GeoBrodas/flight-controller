@@ -2,16 +2,21 @@
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 
+uint32_t previousLoopUs = 0;
+uint32_t batchStartUs = 0;
+uint32_t loopCount = 0;
+const uint32_t LOOP_PERIOD_US = 4000;
+
 float Ax, Ay, Az;
 
 float Gx, Gy, Gz;
 
 float xMax = 1.0;
 float xMin = -0.99;
-float yMax = 1.01;
-float yMin = -1.01;
-float zMax = 0.95;
-float zMin = -1.09;
+float yMax = 1.02;
+float yMin = -1.00;
+float zMax = 0.96;
+float zMin = -1.07;
 
 float xOffset = (xMax + xMin) / 2;
 float yOffset = (yMax + yMin) / 2;
@@ -42,7 +47,7 @@ float gyroXOffset = 0;
 float gyroYOffset = 0;
 float gyroZOffset = 0;
 
-uint32_t  tStart = micros();
+uint32_t tStart = micros();
 
 Adafruit_MPU6050 mpu;
 
@@ -69,20 +74,61 @@ void calibrateGyro() {
   gyroZOffset = sumZ / numPoints;
 }
 
+void calculateLoopFrequency () {
+  uint32_t nowUs = micros();
+
+  if (loopCount == 0) {
+    batchStartUs = nowUs;
+  }
+
+  loopCount++;
+
+  if (loopCount >= 1000) {
+    uint32_t elapsedUs = nowUs - batchStartUs;
+
+    float frequencyHz =
+      (loopCount - 1) * 1000000.0f / elapsedUs;
+
+    Serial.print("Average loop frequency: ");
+
+    Serial.print(frequencyHz);
+
+    Serial.println(" Hz");
+
+    loopCount = 0;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  mpu.begin();
+  Wire.begin();
+  Wire.setClock(400000);
+
+  if (!mpu.begin()) {
+    Serial.println("MPU6050 not detected!");
+    while (true) {
+      delay(100);
+    }
+  }
+
   mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
   calibrateGyro();
-
-  tStart = millis();
 }
 
 void loop() {
+  uint32_t currentUs = micros();
+
+  if (currentUs - previousLoopUs < LOOP_PERIOD_US) {
+    return;
+  }
+
+  previousLoopUs = currentUs;
+
   sensors_event_t a, g, temp;
+
   mpu.getEvent(&a, &g, &temp);
 
   Ax = a.acceleration.x / 9.81;
@@ -103,33 +149,33 @@ void loop() {
   pitchLP = .85 * pitchLP + .15 * pitchRAW;
   rollLP = .85 * rollLP + .15 * rollRAW;
 
-  // GYRO calculation for roll, pitch, yaw
-  rollG = rollG + (micros() - tStart) / 1000. * Gy * 360. / 2. / 3.14;
-  pitchG = pitchG + (micros() - tStart) / 1000. * Gx * 360. / 2. / 3.14;
-  yawG = yawG + (micros() - tStart) / 1000. * Gz * 360. / 2. / 3.14;
+  float dt = micros() - tStart;
 
-  deltaRoll = (micros() - tStart) / 1000. * Gy * 360. / 2. / 3.14;
-  deltaPitch = (micros() - tStart) / 1000. * Gx * 360. / 2. / 3.14;
+  // GYRO calculation for roll, pitch, yaw
+  rollG = rollG + (dt)*1e-6f * Gy * 360. / 2. / 3.14;
+  pitchG = pitchG + (dt)*1e-6f * Gx * 360. / 2. / 3.14;
+  yawG = yawG + (dt)*1e-6f * Gz * 360. / 2. / 3.14;
+
+  deltaRoll = (dt)*1e-6f * Gy * 360. / 2. / 3.14;
+  deltaPitch = (dt)*1e-6f * Gx * 360. / 2. / 3.14;
 
   tStart = micros();
 
   rollComp = .1 * rollRAW + .9 * (rollComp + deltaRoll);
   pitchComp = .1 * pitchRAW + .9 * (pitchComp + deltaPitch);
 
-  Serial.print("rollComp:");
-  Serial.print(rollComp);
-  Serial.print(",");
-  Serial.print("pitchComp:");
-  Serial.print(pitchComp);
-  Serial.print(",");
-  Serial.print("yawG:");
-  Serial.print(yawG);
-  Serial.print(",");
-  Serial.print("UL:");
-  Serial.print(90);
-  Serial.print(",");
-  Serial.print("LL:");
-  Serial.println(-90);
-
-  delay(1);
+  // Serial.print("rollComp:");
+  // Serial.print(rollComp);
+  // Serial.print(",");
+  // Serial.print("pitchComp:");
+  // Serial.print(pitchComp);
+  // Serial.print(",");
+  // Serial.print("yawG:");
+  // Serial.print(yawG);
+  // Serial.print(",");
+  // Serial.print("UL:");
+  // Serial.print(90);
+  // Serial.print(",");
+  // Serial.print("LL:");
+  // Serial.println(-90);
 }
